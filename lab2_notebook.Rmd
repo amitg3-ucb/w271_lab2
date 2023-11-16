@@ -1,0 +1,1744 @@
+---
+title: 'Statistical Methods for Discrete Response, Time Series, and Panel Data (W271): Lab 2'
+geometry: margin=1in
+output: pdf_document
+---
+
+# Context
+
+In 1958 Keeling began continuous monitoring of atmospheric carbon dioxide concentrations from the Mauna Loa Observatory in Hawaii and soon observed a trend increase carbon dioxide levels in addition to the seasonal cycle. He was able to attribute this trend increase to growth in global rates of fossil fuel combustion. This trend has continued to the present, and is known as the "Keeling Curve."
+
+```{r}
+library(tidyverse)
+library(tsibble)
+library(latex2exp)
+library(ggplot2)
+library(patchwork)
+library(scatterplot3d)
+library(forecast)
+library(zoo)
+library(fpp3)
+library(stargazer)
+
+theme_set(theme_minimal())
+knitr::opts_chunk$set(dpi=1000)
+
+```
+
+# The Keeling Curve
+
+In the 1950s, the geochemist Charles David Keeling observed a seasonal pattern in the amount of carbon dioxide present in air samples collected over the course of several years. He was able to attribute this pattern to the variation in global rates of photosynthesis throughout the year, caused by the difference in land area and vegetation cover between the Earth's northern and southern hemispheres. 
+
+In 1958 Keeling began continuous monitoring of atmospheric carbon dioxide concentrations from the Mauna Loa Observatory in Hawaii and soon observed a trend increase carbon dioxide levels in addition to the seasonal cycle. He was able to attribute this trend increase to growth in global rates of fossil fuel combustion. This trend has continued to the present, and is known as the "Keeling Curve."
+
+```{r plot the keeling curve, echo = FALSE}
+tsibble::as_tsibble(co2) %>%
+  ggplot() + 
+  aes(x=index, y=value) + 
+  geom_line(color = 'steelblue') +
+  labs(
+    title = 'Monthly Mean', # TeX(r'(Monthly Mean $CO_2$)'),
+    subtitle = 'The "Keeling Curve"',
+    x = 'Month and Year',
+    y = 'parts per million' # TeX(r'($CO_2$ parts per million)')
+  )
+```
+\newpage
+
+# Your Assignment 
+
+Your goal in this assignment is to produce a comprehensive analysis of the Mona Loa CO2 data that you will be read by an interested, supervising data scientist. Rather than this being a final report, you might think of this as being a contribution to your laboratory. You and your group have been initially charged with the task of investigating the trends of global CO2, and told that if you find "anything interesting" that the team may invest more resources into assessing the question. 
+
+Because this is the scenario that you are responding to: 
+
+1. Your writing needs to be clear, well-reasoned, and concise. Your peers will be reading this, and you have a reputation to maintain.
+2. Decisions that you make for your analysis need also be clear and well-reasoned. While the main narrative of your deliverable might only present the modeling choices that you determine are the most appropriate, there might exist supporting materials that examine what the consequences of other choices would be. As a concrete example, if you determine that a series is an AR(1) process your main analysis might provide the results of the critical test that led you to that determination and the results of the rest of the analysis under AR(1) modeling choices. However, in an appendix or separate document that is linked in your main report, you might show what a MA model would have meant for your results instead.
+3. Your code and repository are a part of the deliverable. If you were to make a clear argument that this is a question worth pursuing, but then when the team turned to continue the work they found a repository that was a jumble of coding idioms, version-ed or outdated files, and skeletons it would be a disappointment.
+
+# Report from the Point of View of 1997 
+
+## (3 points) Task 0a: Introduction 
+
+In 1960, Charles Keeling in his seminal paper, *The Concentration and Isotopic Abundances of Carbon Dioxide in the Atmoshphere* made two notable observations:
+
+1. That a seasonal variation in $CO_2$ concentrations was observed in the northern hemisphere, corresponding to the activity of land plants
+2. That at longer horizons, beyond one year, global concentrations of $CO_2$ have increased at a rate of 1.3 p.p.m. either from the combustion of fossil fuels or from factors tied to the seasonal variation, exceeding the counteracting oceanic effect removing $CO_2$ from the atmoshpere.
+
+Keeling's analysis was conducted using data obtained from three gas analyzers, equipped to measure carbon dioxide concentrations continuously, located in Antarctica, Hawaii and California.
+
+Our goal, in 1994, is to validate Keeling's observations using data collected during the intervening years, measured using modern optical sensors at higher frequencies and report any observed changes to the rates of accumulated $CO_2$ in the atmosphere. Using these estimates we plan to extend our study and apply time-series modeling techniques to forecast the trends and variation in expected future $CO_2$ concentrations to provide bounds on the anticipated levels of $CO_2$. Since the amount of atmospheric $CO_2$ carries broad environmental and economic effects, our results are relevant to both environmental and policy researchers as crucial estimates to help guide mitigating courses of action within the appropriate timeframes.
+
+## (3 points) Task 1a: CO2 data
+
+We conduct a timeseries-analysis of atmospheric $CO_2$ levels using data collected by the NOAA. As stated, the goal is to examine any long-term trends and seasonal fluctuations in $CO_2$ levels.
+
+The input data sourced from NOAA is collected using a $CO_2$ analyzer installed at Mauna Loa that uses a technique based on infrared absorption, wherein a sensor measures the magnitude of absorption of light circulating in an optical cavity.  Data is collected hourly, daily and monthly, we use the monthly average data for this analysis as our primary interest is devoted to long-term changes in $CO_2$ levels.  An important aspect of the measurements is the ongoing calibrations of the analyzer. The absorption by the instrument depends on the total amount of CO2, therefore the temperature and pressure in the instrument, as well as the flow rate, need to be measured and frequent calibrations performed with reference gas mixtures of known amounts of CO2-in-dry-air.  The intake lines are from the top of a 38 m tall tower next to the observatory, to avoid any influence on the measurements by human activities at the observatory. The difference of the ambient air measurements from the reference gas R0 are calculated, and these differences are used to calculate the true fraction CO2.
+
+We begin with an exploratory analysis of the data guided by a few general observations apparent from visual inspection of the time-series:
+
+- the data shows variation periodic in time
+- the general level increases over time
+
+One question is whether the variation remains constant independent of the level of $CO_2$. Analysis of variation around the trend-cycle reveals a persistent increase in the amplitude of the fluctuations.
+
+```{r EDA}
+
+a <- as_tsibble(co2) %>% model(stl = STL()) %>% components() %>% select(season_year) %>% autoplot() + geom_abline(intercept=3, slope=0.00005, linetype="dashed", color = "red") + geom_abline(intercept=-3.2, slope=-0.00005, linetype="dashed", color = "red") + labs(title="Additive Decomposition")
+
+b <- as_tsibble(log(co2)) %>% model(stl = STL()) %>% components() %>% select(season_year) %>% autoplot() + labs(title="Multiplicative Decomposition")
+
+(a | b)
+```
+
+This leads us to conclude that the appropriate decomposition of the time-series into Trend, Seasonal, and Residual components is via Multiplicative Decomposition.
+
+```{r decompo}
+
+as_tsibble(log(co2)) %>% model(stl = STL()) %>% components() %>% autoplot()
+
+trend <- as_tsibble(log(co2)) %>% model(stl = STL()) %>% components() %>% select(trend)
+
+```
+
+Although the long run growth rate of co2 is very low, approx. `r 12*100*summary(lm(trend ~ ., data=trend))$coefficients[2]`% per year, almost linear at the time-scale of observation, we note that the growth is highly statistically significant.
+
+```{r stat signif}
+
+m1 <- summary(lm(trend ~ ., data=trend))$coefficients
+
+stargazer(m1, type="text")
+
+```
+
+```{r, initial data load, echo=F, results=F, message=F, warning=F}
+df = as_tsibble(co2)
+
+month = list()
+year = list()
+count = 1
+
+for (val in df[['index']]) {
+    val = as.character(df[['index']][count])
+    
+    #Get Month and Year from Index
+    strs = strsplit(val,' ')[[1]]
+    month[[count]] = strs[2]
+    year[[count]] = strs[1]
+    
+    count = count + 1
+    
+}
+
+#Store year and month results, case index as time index
+df[['month']] = as.character(month)
+df[['year']] = as.numeric(year)
+df[['index1']] = c(1:dim(df)[1])
+df[['month_int']] = df[['index1']] %% 12
+df["month_int"][df["month_int"] == 0] = 12
+
+
+
+#Quadratic and Log features of Time
+for (num in 2:10){
+    
+    df[[paste('index',num,sep='')]] = as.numeric(df[['index1']]**num)
+}
+
+df[['log_index']] = log(df[['index1']])
+head(df)
+```
+
+### Average/SD CO2 Level Per Year
+
+```{r, avg co2 per yr, echo=F, results=F, message=F, warning=F}
+
+options(repr.plot.width = 20, repr.plot.height =10)
+
+yrs = list()
+means = list()
+sds = list()
+
+count = 1
+for (yr in unique(df[['year']])) {
+    
+    avg = mean(subset(df,year == yr)[['value']])
+    vol = sd(subset(df,year == yr)[['value']])
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+    
+}
+
+annual_df = data.frame(Index=1:length(yrs))
+annual_df[['Years']] = as.numeric(yrs)
+annual_df[['Avg_CO2']] = as.numeric(means)
+annual_df[['SD_CO2']] = as.numeric(sds)
+
+p1 = ggplot(annual_df, aes(x = Years, y = Avg_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "Avg CO2 Levels Over Time",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+p2 = ggplot(annual_df, aes(x = Years, y = SD_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "CO2 Level Volatility Over Time",
+    x = "Time",
+    y = "CO2 Level Volatility"
+  )
+
+p1 | p2
+```
+
+### Average/SD Monthly CO2 Levels
+
+```{r, avg sd monthly co2 levels, echo=F, results=F, message=F, warning=F}
+options(repr.plot.width = 20, repr.plot.height =10)
+
+months = list()
+means = list()
+sds = list()
+
+m_val = list('1'="Jan",
+             '2'='Feb',
+             '3'="Mar",
+             '4'='Apr',
+             '5'='May',
+             '6'='Jun',
+             '7'='Jul',
+             '8'='Aug',
+             '9'='Sep',
+             '10'='Oct',
+             '11'='Nov',
+             '12'='Dec')
+count = 1
+for (val in unique(df[['month_int']])) {
+    
+    avg = mean(subset(df,month_int == val)[['value']])
+    vol = sd(subset(df,month_int == val)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+    
+}
+
+months_df = data.frame(Index=1:length(months))
+months_df[['Month']] = factor(as.character(months), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+months_df[['Avg_CO2']] = as.numeric(means)
+months_df[['SD_CO2']] = as.numeric(sds)
+
+p1 = ggplot(months_df, aes(x = Month, y = Avg_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly Avg CO2 Levels",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+p2 = ggplot(months_df, aes(x = Month, y = SD_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly CO2 Level Volatility",
+    x = "Time",
+    y = "CO2 Level Volatility"
+  )
+
+p1 | p2
+```
+
+## (3 points) Task 2a: Linear time trend model
+
+To setup our problem for validation we split our dataset into an in-sample train period spanning years prior to 1998 and post-1998 as the test period.
+
+We fit linear, polynomial and quadratic models. We observe that the using a linear timeseries model the residuals exhibit a positive trend. This is also prevalent for the quadratic and polynomial models, however the magnitude of the trend is reduced. Our final model uses linear, quadratic, exponential and seasonal features.
+
+We observe quality of fit, distribution of residuals and plots showing normality of residuals for each model.
+
+```{r, split train test, echo=F, results=F, message=F, warning=F}
+train = subset(df,year <= 1987)
+test = subset(df, year > 1987)
+```
+
+### Linear Time Trend Model
+
+```{r}
+model1 = lm(value~index1,train)
+summary(model1)
+
+train_results = data.frame(value = train[['value']],
+          preds = model1$fitted.values,
+          resids = model1$residuals,
+          index1 = train[['index1']])
+
+plot(train_results[['index1']], 
+     train_results[['resids']], 
+     main = "Scatter Plot of Residuals", 
+     xlab = "time", ylab = 
+     "Residuals")
+
+qqnorm(train_results[['resids']])
+qqline(train_results[['resids']], col = 2)
+train_r2 = 1 - mean((predict(model1,train) - train[['value']])**2) / var(train[['value']])
+
+p1 = ggplot(train_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Train Set), R2 =",train_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p1
+
+test_results = data.frame(value = test[['value']],
+          preds = predict(model1, test),
+          resids = test[['value']] - predict(model1, test),
+          index1 = test[['index1']])
+
+test_r2 = 1 - mean((predict(model1,test) - test[['value']])**2) / var(test[['value']])
+p2 = ggplot(test_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Test Set), R2 =",test_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p2
+```
+
+### Quadratic Time Trend Model
+
+```{r}
+model1 = lm(value~index1 + index2,train)
+summary(model1)
+
+train_results = data.frame(value = train[['value']],
+          preds = model1$fitted.values,
+          resids = model1$residuals,
+          index1 = train[['index1']])
+
+plot(train_results[['index1']], 
+     train_results[['resids']], 
+     main = "Scatter Plot of Residuals", 
+     xlab = "time", ylab = 
+     "Residuals")
+
+qqnorm(train_results[['resids']])
+qqline(train_results[['resids']], col = 2)
+train_r2 = 1 - mean((predict(model1,train) - train[['value']])**2) / var(train[['value']])
+
+p1 = ggplot(train_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Train Set), R2 =",train_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p1
+
+test_results = data.frame(value = test[['value']],
+          preds = predict(model1, test),
+          resids = test[['value']] - predict(model1, test),
+          index1 = test[['index1']])
+
+test_r2 = 1 - mean((predict(model1,test) - test[['value']])**2) / var(test[['value']])
+p2 = ggplot(test_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Test Set), R2 =",test_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p2
+```
+
+### Quadratic Time Trend W/ Log(Time) Feature
+
+```{r}
+model1 = lm(value~index1 + index2 + log_index,train)
+summary(model1)
+
+train_results = data.frame(value = train[['value']],
+          preds = model1$fitted.values,
+          resids = model1$residuals,
+          index1 = train[['index1']])
+
+plot(train_results[['index1']], 
+     train_results[['resids']], 
+     main = "Scatter Plot of Residuals", 
+     xlab = "time", ylab = 
+     "Residuals")
+
+qqnorm(train_results[['resids']])
+qqline(train_results[['resids']], col = 2)
+train_r2 = 1 - mean((predict(model1,train) - train[['value']])**2) / var(train[['value']])
+
+p1 = ggplot(train_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Train Set), R2 =",train_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p1
+
+test_results = data.frame(value = test[['value']],
+          preds = predict(model1, test),
+          resids = test[['value']] - predict(model1, test),
+          index1 = test[['index1']])
+
+test_r2 = 1 - mean((predict(model1,test) - test[['value']])**2) / var(test[['value']])
+p2 = ggplot(test_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Test Set), R2 =",test_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p2
+```
+
+### Polynomial Time Trend Model
+
+```{r}
+#Find Optimal Model Order
+bic_values = list()
+test_r2_values = list()
+
+model = lm(value~index1 + log_index,train)
+bic_values[[1]] = BIC(model)
+test_r2_values[[1]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2 + log_index,train)
+bic_values[[2]] = BIC(model)
+test_r2_values[[2]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3 + log_index,train)
+bic_values[[3]] = BIC(model)
+test_r2_values[[3]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3+index4 + log_index,train)
+bic_values[[4]] = BIC(model)
+test_r2_values[[4]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3+index4+index5 + log_index,train)
+bic_values[[5]] = BIC(model)
+test_r2_values[[5]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3+index4+index5+index6 + log_index,train)
+bic_values[[6]] = BIC(model)
+test_r2_values[[6]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3+index4+index5+index6+index7 + log_index,train)
+bic_values[[7]] = BIC(model)
+test_r2_values[[7]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+model = lm(value~index1+index2+index3+index4+index5+index6+index7+index8 + log_index,train)
+bic_values[[8]] = BIC(model)
+test_r2_values[[8]] = 1 - mean((predict(model,test) - test[['value']])**2) / var(test[['value']])
+
+plot(1:8, 
+     bic_values, 
+     main = "BIC Values by Model Order", 
+     xlab = "Order", ylab = 
+     "BIC")
+
+plot(1:8, 
+     test_r2_values, 
+     main = "Test Set R2 by Model Order", 
+     xlab = "Order", ylab = 
+     "Test R2")
+
+
+model1 = lm(value~index1+index2+log_index +month,train)
+summary(model1)
+
+train_results = data.frame(value = train[['value']],
+          preds = model1$fitted.values,
+          resids = model1$residuals,
+          index1 = train[['index1']])
+
+plot(train_results[['index1']], 
+     train_results[['resids']], 
+     main = "Scatter Plot of Residuals", 
+     xlab = "time", ylab = 
+     "Residuals")
+
+qqnorm(train_results[['resids']])
+qqline(train_results[['resids']], col = 2)
+train_r2 = 1 - mean((predict(model1,train) - train[['value']])**2) / var(train[['value']])
+
+p1 = ggplot(train_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Train Set), R2 =",train_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p1
+
+test_results = data.frame(value = test[['value']],
+          preds = predict(model1, test),
+          resids = test[['value']] - predict(model1, test),
+          index1 = test[['index1']])
+
+test_r2 = 1 - mean((predict(model1,test) - test[['value']])**2) / var(test[['value']])
+p2 = ggplot(test_results) +
+  geom_line(aes(x = index1, y = value), color = 'blue') +
+  geom_line(aes(x = index1, y = preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Predicted (Green) CO2 Levels Over Time (Test Set), R2 =",test_r2),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+
+p2
+```
+
+### Train Final Linear Model
+
+```{r}
+final_model = lm(value~index1+index2+log_index + month,df)
+BIC(final_model)
+summary(final_model)
+```
+
+### Generate Feature Data for Forecast, Use Linear Time Trend Model to Forecast
+
+```{r}
+start_year = 1998
+end_year = 2021
+start_index = 469
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(final_model,rows)
+
+ggplot(rows) +
+  geom_line(aes(x = index1, y = preds), color = 'blue') +
+
+  labs(
+    title = 'Forecasted CO2 Values',
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+## (3 points) Task 3a: ARIMA times series model 
+
+We develop an ARIMA model to fit to the series and generate forecasts to the year 2022.  The parameters of our model are chosen by cross-validation. We find that it is necessary to detrend the $CO_2$ Series such that it is stationary. To achieve this we use a linear model to detrend series as it captures the linear & nonlinear temporal and seasonal trends inherent in the data.
+
+```{r}
+df2 = df
+df2[['diff_value']] = final_model$residuals
+
+head(df2)
+```
+
+### Check Mean/Variance of Series over time to visually validate stationarity assumptions
+
+```{r}
+ggplot(df2, aes(x = index1, y = diff_value)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "Detrended CO2 Levels Over Time",
+    x = "Time",
+    y = "Detrended CO2 Levels"
+  )
+```
+
+### Check ACF/PACF Plots
+
+```{r}
+acf(df2[['diff_value']])
+pacf(df2[['diff_value']])
+```
+
+### Grid Search to Find P, Q Values that Minimize In Sample BIC
+
+```{r}
+rows = list()
+
+for (p in 1:10){
+    
+    for (q in 0:5) {
+        
+        suppressWarnings({
+            rows = append(rows,c(p,q,BIC(arima(df2[['diff_value']], order=c(p,0,q)))))
+            
+            })
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 3)))
+colnames(rows) = c('P','Q','BICVal')
+
+for (col in colnames(rows)) {
+    
+    rows[[col]] = as.numeric(rows[[col]])
+    
+}
+```
+
+```{r}
+head(rows,5)
+```
+
+### Plot BIC @ Various P,Q Levels and Train Final ARIMA Model
+
+```{r}
+ggplot(rows, aes(x = P, y = Q)) +
+  geom_point(size = 20, aes(color = BICVal)) +
+
+  labs(
+    title = 'BIC Values for ARIMA Model at Various P,Q Levels',
+    x = "P",
+    y = "Q"
+  )
+```
+
+```{r}
+subset(rows,BICVal == min(rows[['BICVal']]))
+```
+
+```{r}
+arima_model = arima(df2[['diff_value']], order=c(2,0,0))
+train_r2 = 1 - sum((arima_model$residuals**2)) / (var(df2[['diff_value']])*length(arima_model$residuals))
+arima_model
+train_r2
+```
+
+### Validate Residuals Are White Noise, Approximately Normally Distributed
+
+```{r}
+df2[['resids']] = arima_model$residuals
+
+ggplot(df2, aes(x = index1, y = resids)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = 'Residuals Over Time',
+    x = "Time",
+    y = "Residuals"
+  )
+
+qqnorm(df2[['resids']])
+qqline(df2[['resids']], col = 2)
+
+acf(df2[['resids']])
+```
+
+```{r}
+vals = (df2[['diff_value']] - df2[['resids']])+final_model$fitted.values
+df2[['final_arima_preds']] = vals
+train_r2 = 1 - sum((df2[['value']] - vals)**2) / (var(df2[['value']])*dim(df2)[1])
+
+ggplot(df2) +
+  geom_line(aes(x = index1, y = value),color = 'blue') +
+  geom_line(aes(x = index1, y = final_arima_preds),color = 'green') +
+  labs(
+    title = paste('True (Blue) vs Predicted (Green) C02 Levels Over Time, Train Set, R2 = ',train_r2),
+    x = "Time",
+    y = "CO2 Values"
+  )
+```
+
+### Forecast to 2022
+
+```{r}
+start_year = 1998
+end_year = 2023
+start_index = 469
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(final_model,rows)
+rows[['arima_preds']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Point.Forecast']]
+rows[['arima_lb']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Lo.95']]
+rows[['arima_ub']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Hi.95']]
+
+rows[['final_preds']] = rows[['preds']] + rows[['arima_preds']]
+
+head(rows)
+```
+
+```{r}
+ggplot(rows, aes(x = index1, y = final_preds)) +
+  geom_line() +
+
+  labs(
+    title = 'ARIMA CO2 Forecasts Over Time',
+    x = "Time",
+    y = "Forecasted CO2 Levels"
+  )
+```
+
+```{r}
+ggplot(rows) +
+  geom_line(aes(x = index1, y = arima_preds)) + 
+  geom_line(aes(x = index1, y = arima_lb), color = 'blue') +
+  geom_line(aes(x = index1, y = arima_ub), color = 'blue')
+
+  labs(
+    title = 'ARIMA Forecasts Over Time Without Trend Reconstruction, With LB/UB',
+    x = "Time",
+    y = "ARIMA Forecasts"
+  )
+```
+
+## (3 points) Task 4a: Forecast atmospheric CO2 growth 
+
+We generate predictions for when atmospheric CO2 is expected to be at 420ppm and 500 ppm levels for the first and final times. Given errors observed from previous forecasts our hope is that our more modern models which utilize more sophisticated features will provide more accurate results of future $CO_2$ levels.
+
+```{r}
+start_year = 1998
+end_year = 2101
+start_index = 469
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(final_model,rows)
+rows[['arima_preds']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Point.Forecast']]
+rows[['arima_lb']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Lo.95']]
+rows[['arima_ub']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Hi.95']]
+
+rows[['final_preds']] = rows[['preds']] + rows[['arima_preds']]
+
+rows[['spot420']] = 420
+rows[['spot500']] = 500
+
+head(rows)
+```
+
+```{r}
+ggplot(rows) +
+  geom_line(aes(x = index1, y = final_preds)) +
+  geom_line(aes(x = index1, y = spot420), color = 'orange') + 
+  geom_line(aes(x = index1, y = spot500), color = 'red') + 
+
+  labs(
+    title = 'ARIMA CO2 Forecasts Over Time',
+    x = "Time",
+    y = "Forecasted CO2 Levels"
+  )
+```
+
+### First and Final Time at 420, April 2024 - Oct 2026
+
+```{r}
+subset(rows,(final_preds > 419.5) & (final_preds < 421))
+```
+
+### First and Final Time at 500, April 2055 - Nov 2056
+
+```{r}
+subset(rows,(final_preds > 499.5) & (final_preds < 501))
+```
+
+# Report from the Point of View of the Present 
+
+One of the very interesting features of Keeling and colleagues' research is that they were able to evaluate, and re-evaluate the data as new series of measurements were released. This permitted the evaluation of previous models' performance and a much more difficult question: If their models' predictions were "off" was this the result of a failure of the model, or a change in the system?  
+
+## (1 point) Task 0b: Introduction
+
+
+Our goal is to re-evaluate Keeling's observations of accumulated $CO_2$ in the atmosphere using the most upto date data. As of April of 2019, a new CO2 analyzer was installed at Mauna Loa that uses a technique called Cavity Ring-Down Spectroscopy (CRDS). CRDS is based on the measurement of the rate of absorption of light circulating in an optical cavity by comparing the ring down times when the laser is at a wavelength that the CO2 molecule does not absorb, to the ring down time when the laser is at a wavelength that the CO2 molecule does absorb.
+
+## (3 points) Task 1b: Create a modern data pipeline for Mona Loa CO2 data.
+
+We establish a modern data pipeline for Mauna Loa CO2 data. The data was obtained from the NOAA website, specifically from the CO2 daily data page. Additional columns for analysis were created, such as a log-transformed index and polynomial terms for time. The time series data was converted into a tsibble object for efficient time-series analysis. We then conducted an exploratory data analysis (EDA) to gain insights into the CO2 levels over time. The analysis included visualizations depicting the overall trend, average/standard deviation (SD) of CO2 levels per year, and monthly variations. The first plot illustrated the continuous increase in CO2 levels over the years. The second set of plots focused on yearly averages and SDs, providing a clearer picture of trends and volatilities. The third set of plots delved into monthly variations, highlighting average CO2 levels and their volatility. This EDA lays the foundation for further analysis and comparison with Keeling's observations from 1997. It also sets the stage for evaluating the performance of earlier models and forecasting future CO2 levels.
+
+```{r}
+library(tseries)
+co2_present = read.table(url("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_daily_mlo.txt"))
+#co2_present = read.table("./co2_daily_mlo.txt")
+colnames(co2_present) =  c('year','month_int','day','year_decimal','value')
+co2_present[['month_int']] = co2_present[['month_int']]
+head(co2_present)
+
+current_rows = list()
+start_index = subset(df,year == 1974 & month == 'May')[['index1']]
+
+for (val in unique(co2_present[['year']])) {
+    
+    for (month in 1:12) {
+        
+        subset_df = subset(co2_present,(year == val) & (month_int == month))
+        n_obs = dim(subset_df)[1]
+        
+        if (n_obs > 0) {
+            
+            avg_co2 = mean(subset_df[['value']])
+            current_rows = append(current_rows, c(avg_co2,
+                                  m_val[[month]],
+                                  val,
+                                  start_index,
+                                  month
+                                 )
+                         )
+            
+            start_index = start_index + 1
+            if (start_index == 204) {
+                start_index = start_index + 1
+            }
+            
+        }
+        
+    }
+}
+
+co2_present = data.frame(t(matrix(current_rows,nrow = 5)))
+colnames(co2_present) = c('value','month','year','index1','month_int')
+co2_present[['value']] = as.numeric(co2_present[['value']])
+co2_present[['month']] = factor(as.character(co2_present[['month']]), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+co2_present[['year']] = as.numeric(co2_present[['year']])
+co2_present[['index1']] = as.numeric(co2_present[['index1']])
+co2_present[['month_int']] = as.numeric(co2_present[['month_int']])
+
+for (num in 2:10) {
+    co2_present[[paste('index',num,sep = '')]] = co2_present[['index1']]**num
+}
+
+co2_present[['log_index']] = log(co2_present[['index1']])
+co2_present[['index']] = yearmonth(as.yearmon(paste(co2_present[['year']],co2_present[['month']]),"%Y %b"))
+
+co2_present = as_tsibble(co2_present,index = index1, key = year)
+
+head(co2_present)
+```
+
+### CO2 Levels Over Time
+
+```{r}
+ggplot(co2_present, aes(x = index, y = value)) +
+  geom_line() +
+  labs(
+    title = "CO2 Levels Over Time",
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+### Average/SD CO2 Level Per Year
+
+```{r}
+options(repr.plot.width = 20, repr.plot.height =10)
+
+yrs = list()
+means = list()
+sds = list()
+
+count = 1
+for (yr in unique(co2_present[['year']])) {
+    
+    avg = mean(subset(co2_present,year == yr)[['value']])
+    vol = sd(subset(co2_present,year == yr)[['value']])
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+    
+}
+
+annual_co2_present = data.frame(Index=1:length(yrs))
+annual_co2_present[['Years']] = as.numeric(yrs)
+annual_co2_present[['Avg_CO2']] = as.numeric(means)
+annual_co2_present[['SD_CO2']] = as.numeric(sds)
+
+p1 = ggplot(annual_co2_present, aes(x = Years, y = Avg_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "Avg CO2 Levels Over Time",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+p2 = ggplot(annual_co2_present, aes(x = Years, y = SD_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "CO2 Level Volatility Over Time",
+    x = "Time",
+    y = "CO2 Level Volatility"
+  )
+
+p1 | p2
+```
+
+### Average/SD Monthly CO2 Levels
+
+```{r}
+options(repr.plot.width = 20, repr.plot.height =10)
+
+months = list()
+means = list()
+sds = list()
+
+m_val = list('1'="Jan",
+             '2'='Feb',
+             '3'="Mar",
+             '4'='Apr',
+             '5'='May',
+             '6'='Jun',
+             '7'='Jul',
+             '8'='Aug',
+             '9'='Sep',
+             '10'='Oct',
+             '11'='Nov',
+             '12'='Dec')
+count = 1
+for (val in unique(co2_present[['month_int']])) {
+    
+    avg = mean(subset(co2_present,month_int == val)[['value']])
+    vol = sd(subset(co2_present,month_int == val)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+    
+}
+
+months_co2_present = data.frame(Index=1:length(months))
+months_co2_present[['Month']] = factor(as.character(months), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+months_co2_present[['Avg_CO2']] = as.numeric(means)
+months_co2_present[['SD_CO2']] = as.numeric(sds)
+
+p1 = ggplot(months_co2_present, aes(x = Month, y = Avg_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly Avg CO2 Levels",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+p2 = ggplot(months_co2_present, aes(x = Month, y = SD_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly CO2 Level Volatility",
+    x = "Time",
+    y = "CO2 Level Volatility"
+  )
+
+p1 | p2
+```
+
+## (1 point) Task 2b: Compare linear model forecasts against realized CO2
+
+In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from a linear time model in 1997 (i.e. "Task 2a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Results stay very consistent at first but as time continues we can see that the true values are increasing at a larger rate than what our predicted values would have estimated.
+
+```{r}
+linear_preds = list()
+arima_preds = list()
+final_preds = list()
+
+forecasted_df = subset(rows,year > 1997 & year < 2024)
+co2_present_subset = subset(co2_present,year > 1997)
+
+for (num in 1:dim(co2_present_subset)[1]){
+    
+    single_row = slice(co2_present_subset,num)
+    year_val = single_row[['year']]
+    month_val = single_row[['month']]
+    
+    forecast_row = subset(forecasted_df, year == year_val & month == month_val)
+    linear_preds = append(linear_preds,forecast_row[['preds']])
+    arima_preds = append(arima_preds,forecast_row[['arima_preds']])
+    final_preds = append(final_preds,forecast_row[['final_preds']])   
+}
+
+co2_present_subset[['linear_preds']] = as.numeric(linear_preds)
+co2_present_subset[['arima_preds']] = as.numeric(arima_preds)
+co2_present_subset[['final_preds']] = as.numeric(final_preds)
+
+head(co2_present_subset)
+```
+
+```{r}
+ggplot(co2_present_subset) +
+  geom_line(aes(x = index, y = value),color = 'blue') +
+  geom_line(aes(x = index, y = linear_preds),color = 'green') +
+
+
+  labs(
+    title = "True (Blue) vs Predicted (Green) CO2 Levels Over Time",
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+## (1 point) Task 3b: Compare ARIMA models forecasts against realized CO2  
+
+In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from the ARIMA model in 1997 (i.e. "Task 3a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Initially, there is a harmonious alignment between the true (blue) and predicted (green) CO2 levels, indicating that the ARIMA model effectively captured the underlying patterns in the earlier years. However, as time progresses, a noticeable trend emerges: the actual CO2 levels exhibit a more accelerated increase compared to what the ARIMA model predicted. This growing disparity suggests that there are evolving factors or trends influencing atmospheric CO2 concentrations that were not adequately accounted for in the original 1997 ARIMA model. These results are very similar to our previous graph vs our linear time model. Consistent with the broader Keeling Curve's evolution from 1997 to the present, the yearly seasonal patterns and monthly variations in the true values stay consistent. This adherence to historical patterns underscores the persistent nature of the underlying dynamics of atmospheric CO2 concentrations. Furthermore, the observation that the predicted values fall behind the actual values over time hints at the potential influence of a quadratic term in the Keeling Curve. This suggests a more intricate relationship between time and CO2 levels than initially modeled.
+
+```{r}
+ggplot(co2_present_subset) +
+  geom_line(aes(x = index, y = value),color = 'blue') +
+  geom_line(aes(x = index, y = final_preds),color = 'green') +
+
+
+  labs(
+    title = "True (Blue) vs Predicted (Green) CO2 Levels Over Time",
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+## (3 points) Task 4b: Evaluate the performance of 1997 linear and ARIMA models 
+
+We initially predicted that atmospheric CO2 would cross 420ppm for the first time in Task 4a, but here we calculate the truth and can see than it occurred in April 2022 vs our forecast of April 2024. Our models were close to the truth, being only two years off. This discrepancy suggests a lag in predicting the acceleration of CO2 levels, indicating the complexity of forecasting long-term environmental changes. Now we continue to use the weekly data to generate a month-average series from 1997 to the present (month average series already generated during initial data ingestion), and compare the overall forecasting performance of our models from Parts 2a and 3b over the entire period.
+
+```{r}
+subset(co2_present_subset, value >= 419.5 & value < 420.5)
+```
+
+#### Linear Model Performance
+
+```{r}
+pred_col = 'linear_preds'
+
+r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
+(var(co2_present_subset[['value']])*dim(co2_present_subset)[1])
+
+rmse = sqrt(mean((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))
+mae = mean(abs(co2_present_subset[['value']] - co2_present_subset[[pred_col]]))
+
+paste('R2',r2)
+paste('RMSE',rmse)
+paste('MAE',mae)
+
+performance_over_time = list()
+
+for (year_val in unique(co2_present_subset[['year']])) {
+    
+    subset_df = subset(co2_present_subset,year == year_val)
+    r2 = 1 - (sum((subset_df[['value']] - subset_df[[pred_col]])**2))/
+    (var(subset_df[['value']])*dim(subset_df)[1])
+
+    rmse = sqrt(mean((subset_df[['value']] - subset_df[[pred_col]])**2))
+    mae = mean(abs(subset_df[['value']] - subset_df[[pred_col]]))
+    
+    performance_over_time = append(performance_over_time,c(year_val,r2,rmse,mae))
+    
+}
+
+performance_over_time = data.frame(t(matrix(performance_over_time,nrow = 4)))
+colnames(performance_over_time) = c('Year','R2','RMSE','MAE')
+
+for (col in colnames(performance_over_time)){
+    
+    performance_over_time[[col]] = as.numeric(performance_over_time[[col]])
+    
+}
+
+ggplot(performance_over_time) +
+  geom_line(aes(x = Year, y = R2),color = 'blue') +
+  geom_line(aes(x = Year, y = RMSE),color = 'green') +
+  geom_line(aes(x = Year, y = MAE),color = 'orange') +
+
+  labs(
+    title = paste("R2 (Blue), RMSE (Green), and MAE (Orange) Between",pred_col,'and Actual CO2 Values Over Time'),
+    x = "Time",
+    y = "Metric Values"
+  )
+```
+
+#### ARIMA Model Performance
+
+```{r}
+pred_col = 'final_preds'
+
+r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
+(var(co2_present_subset[['value']])*dim(co2_present_subset)[1])
+
+rmse = sqrt(mean((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))
+mae = mean(abs(co2_present_subset[['value']] - co2_present_subset[[pred_col]]))
+
+paste('R2',r2)
+paste('RMSE',rmse)
+paste('MAE',mae)
+
+performance_over_time = list()
+
+for (year_val in unique(co2_present_subset[['year']])) {
+    
+    subset_df = subset(co2_present_subset,year == year_val)
+    r2 = 1 - (sum((subset_df[['value']] - subset_df[[pred_col]])**2))/
+    (var(subset_df[['value']])*dim(subset_df)[1])
+
+    rmse = sqrt(mean((subset_df[['value']] - subset_df[[pred_col]])**2))
+    mae = mean(abs(subset_df[['value']] - subset_df[[pred_col]]))
+    
+    performance_over_time = append(performance_over_time,c(year_val,r2,rmse,mae))
+    
+}
+
+performance_over_time = data.frame(t(matrix(performance_over_time,nrow = 4)))
+colnames(performance_over_time) = c('Year','R2','RMSE','MAE')
+
+for (col in colnames(performance_over_time)){
+    
+    performance_over_time[[col]] = as.numeric(performance_over_time[[col]])
+    
+}
+
+ggplot(performance_over_time) +
+  geom_line(aes(x = Year, y = R2),color = 'blue') +
+  geom_line(aes(x = Year, y = RMSE),color = 'green') +
+  geom_line(aes(x = Year, y = MAE),color = 'orange') +
+
+  labs(
+    title = paste("R2 (Blue), RMSE (Green), and MAE (Orange) Between",pred_col,'and Actual CO2 Values Over Time'),
+    x = "Time",
+    y = "Metric Values"
+  )
+```
+
+## (4 points) Task 5b: Train best models on present data
+
+We now seasonally adjust the weekly NOAA data, and split both seasonally-adjusted (SA) and non-seasonally-adjusted (NSA) series into training and test sets, using the last two years of observations as the test sets, fitting ARIMA models for both SA and NSA series.
+
+### Seasonal and Non seasonally adjusted Data, Split Into Train and Test
+
+We start by creating two versions of the CO2 data: one with seasonal adjustments (SA) and one without (NSA). These are then split into training and testing sets for model evaluation. 
+
+```{r}
+nsa = co2_present
+nsa[['diff_value']] = c(c(0),diff(nsa[['value']]))
+nsa = slice(nsa,2:dim(nsa)[1])
+
+head(nsa)
+
+sa = co2_present
+sa[['diff_value']] = sa[['value']] - lag(sa[['value']],12)
+sa[['diff_value2']] = sa[['diff_value']] - lag(sa[['diff_value']],1)
+sa = na.omit(sa)
+
+head(sa)
+
+nsa_train = subset(nsa,year < 2022)
+nsa_test = subset(nsa, year >= 2022)
+
+sa_train = subset(sa,year < 2022)
+sa_test = subset(sa, year >= 2022)
+```
+
+### Inspect Stationarity of Adjusted Series
+
+The stationarity of the adjusted series (NSA and SA) is visually inspected, and the target variables over time are plotted.
+
+```{r}
+ggplot(nsa,aes(x = index, y = diff_value)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("NSA Target Variable Over Time"),
+    x = "Time",
+    y = "Target Variable"
+  )
+
+ggplot(sa,aes(x = index, y = diff_value2)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("SA Target Variable Over Time"),
+    x = "Time",
+    y = "Target Variable"
+  )
+```
+
+### ACF/PACF of NSA Series
+
+The autocorrelation and partial autocorrelation functions of the NSA and SA series are plotted to identify potential parameters for ARIMA modeling.
+
+```{r}
+acf(nsa[['diff_value']])
+pacf(nsa[['diff_value']])
+```
+
+### ACF/PACF of SA Series
+
+```{r}
+acf(sa[['diff_value2']])
+pacf(sa[['diff_value2']])
+```
+
+### For both SA and NSA series, fit ARIMA models using all appropriate steps. TODO - Measure and discuss how your models perform in-sample and (psuedo-) out-of-sample, comparing candidate models and explaining your choice
+
+ARIMA models are fitted to both the NSA and SA series using a grid search approach to identify optimal parameters. The models are evaluated in-sample and pseudo out-of-sample to measure their performance.
+
+```{r}
+nsarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        suppressWarnings({model = arima(nsa_train[['diff_value']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(nsa_test)[1]))[['Point.Forecast']]
+        preds = nsa_train[['value']][dim(nsa_train)[1]] + cumsum(preds)
+        true = nsa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            nsarows = append(nsarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+nsarows = data.frame(t(matrix(nsarows,nrow = 6)))
+colnames(nsarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(nsarows)) {
+    
+    nsarows[[col]] = as.numeric(nsarows[[col]])
+    
+}
+
+nsarows
+```
+
+```{r}
+sarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        
+        suppressWarnings({model = arima(sa_train[['diff_value2']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(sa_test)[1]))[['Point.Forecast']]
+        preds = sa_train[['diff_value']][dim(sa_train)[1]] + cumsum(preds)
+        preds = preds + c(slice(data.frame(lag(co2_present[['value']],12))
+                                ,(dim(co2_present)[1] - dim(sa_test)[1] + 1):(dim(co2_present)[1])))$lag.co2_present...value.....12.
+        true = sa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            sarows = append(sarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+sarows = data.frame(t(matrix(sarows,nrow = 6)))
+colnames(sarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(sarows)) {
+    
+    sarows[[col]] = as.numeric(sarows[[col]])
+    
+}
+
+sarows
+```
+
+### In addition, fit a polynomial time-trend model to the seasonally-adjusted series and compare its performance to that of your ARIMA model.
+
+A polynomial time-trend model is fitted to the seasonally-adjusted series, and its performance is compared to the ARIMA model.
+
+```{r}
+model = lm(diff_value2 ~ index1 + index2 + log_index + month,data = sa_train)
+summary(model)
+BIC(model)
+
+preds = predict(model,sa_test)
+preds = sa_train[['diff_value']][dim(sa_train)[1]] + cumsum(preds)
+preds = preds + c(slice(data.frame(lag(co2_present[['value']],12))
+                        ,(dim(co2_present)[1] - dim(sa_test)[1] + 1):(dim(co2_present)[1])))$lag.co2_present...value.....12.
+true = sa_test[['value']]
+
+r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+rmse = sqrt(mean((true-preds)**2))
+mae = mean(abs(true-preds))
+
+print(r2)
+print(rmse)
+print(mae)
+```
+
+### Retry Modeling Seasonally Adjusted Series Using Linear Model to Seasonal Adjust
+
+The code retrains the seasonally-adjusted series using a linear model for adjustment and then fits ARIMA models to the adjusted series.
+
+```{r}
+sa = co2_present
+
+sa_train = subset(sa,year < 2022)
+sa_test = subset(sa, year >= 2022)
+
+model = lm(value ~ index1 + index2 + log_index + month,data = sa_train)
+sa_train[['preds']] = model$fitted.values
+sa_train[['diff_value']] = model$residuals
+
+sa_test[['preds']] = predict(model,sa_test)
+sa_test[['diff_value']] = sa_test[['value']] - sa_test[['preds']]
+```
+
+```{r}
+ggplot(sa_train,aes(x = index, y = diff_value)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("SA Target Variable Over Time"),
+    x = "Time",
+    y = "Target Variable"
+  )
+
+acf(sa_train[['diff_value']])
+pacf(sa_train[['diff_value']])
+```
+
+```{r}
+sarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        
+        suppressWarnings({model = arima(sa_train[['diff_value']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(sa_test)[1]))[['Point.Forecast']]
+        preds = sa_test[['preds']] + preds
+        true = sa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            sarows = append(sarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+sarows = data.frame(t(matrix(sarows,nrow = 6)))
+colnames(sarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(sarows)) {
+    
+    sarows[[col]] = as.numeric(sarows[[col]])
+    
+}
+
+sarows
+```
+
+#### Fit Polynomial to Seasonally Adjusted Data
+
+```{r}
+model = lm(diff_value~index1 + index2 + log_index + month,sa_train)
+
+summary(model)
+```
+
+#### Final Arima Model, Use Linear Model Differencing Because it allows us to reconstruct forecasts farther out into the future even when arima model begins generating constant predictions
+
+```{r}
+final_arima = arima(sa_train[['diff_value']], order=c(1,0,1))
+summary(final_arima)
+1 - (sum(final_arima$residuals**2) / (var(sa_train[['diff_value']]) * dim(sa_train)[1]))
+```
+
+#### Evaluate Residuals
+
+```{r}
+sa_train[['arima_resids']] = final_arima$residuals
+```
+
+```{r}
+ggplot(sa_train,aes(x = index, y = arima_resids)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("ARIMA Model Residuals Over Time"),
+    x = "Time",
+    y = "Residuals"
+  )
+
+acf(sa_train[['arima_resids']])
+pacf(sa_train[['arima_resids']])
+qqnorm(sa_train[['arima_resids']])
+qqline(sa_train[['arima_resids']])
+```
+
+#### Evaluate Performance on Test Set
+
+```{r}
+sa_test[['arima_preds']] = data.frame(forecast(final_arima,h = dim(sa_test)[1]))[['Point.Forecast']]
+sa_test[['final_preds']] = sa_test[['preds']] + sa_test[['arima_preds']]
+sa_test[['final_resids']] = sa_test[['value']] - sa_test[['final_preds']]
+
+1 - (sum(sa_test[['final_resids']]**2) / (var(sa_test[['value']]) * dim(sa_test)[1]))
+```
+
+```{r}
+ggplot(sa_test) +
+  geom_line(aes(x = index, y = value), color = 'blue') + 
+  geom_line(aes(x = index, y = final_preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Forecasted (Green) CO2 Levels Over Time"),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+### Retry Modeling Non Seasonally Adjusted Series Using Linear Model to Adjust
+
+```{r}
+nsa = co2_present
+
+nsa_train = subset(nsa,year < 2022)
+nsa_test = subset(nsa, year >= 2022)
+
+model = lm(value ~ index1 + index2 + log_index,data = nsa_train)
+nsa_train[['preds']] = model$fitted.values
+nsa_train[['diff_value']] = model$residuals
+
+nsa_test[['preds']] = predict(model,nsa_test)
+nsa_test[['diff_value']] = nsa_test[['value']] - nsa_test[['preds']]
+```
+
+```{r}
+ggplot(nsa_train,aes(x = index, y = diff_value)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("SA Target Variable Over Time"),
+    x = "Time",
+    y = "Target Variable"
+  )
+
+acf(nsa_train[['diff_value']])
+pacf(nsa_train[['diff_value']])
+```
+
+```{r}
+nsarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        
+        suppressWarnings({model = arima(nsa_train[['diff_value']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(nsa_test)[1]))[['Point.Forecast']]
+        preds = nsa_test[['preds']] + preds
+        true = nsa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            nsarows = append(nsarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+nsarows = data.frame(t(matrix(nsarows,nrow = 6)))
+colnames(nsarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(nsarows)) {
+    
+    nsarows[[col]] = as.numeric(nsarows[[col]])
+    
+}
+
+nsarows
+```
+
+#### Final Arima Model, Use Linear Model Differencing Because it allows us to reconstruct forecasts farther out into the future even when arima model begins generating constant predictions
+
+```{r}
+final_arima = arima(nsa_train[['diff_value']], order=c(5,0,4))
+summary(final_arima)
+1 - (sum(final_arima$residuals**2) / (var(nsa_train[['diff_value']]) * dim(nsa_train)[1]))
+```
+
+#### Evaluate Residuals
+
+```{r}
+nsa_train[['arima_resids']] = final_arima$residuals
+```
+
+```{r}
+ggplot(nsa_train,aes(x = index, y = arima_resids)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("ARIMA Model Residuals Over Time"),
+    x = "Time",
+    y = "Residuals"
+  )
+
+acf(sa_train[['arima_resids']])
+pacf(sa_train[['arima_resids']])
+qqnorm(sa_train[['arima_resids']])
+qqline(sa_train[['arima_resids']])
+```
+
+#### Evaluate Performance on Test Set
+
+```{r}
+nsa_test[['arima_preds']] = data.frame(forecast(final_arima,h = dim(nsa_test)[1]))[['Point.Forecast']]
+nsa_test[['final_preds']] = nsa_test[['preds']] + nsa_test[['arima_preds']]
+nsa_test[['final_resids']] = nsa_test[['value']] - nsa_test[['final_preds']]
+
+1 - (sum(nsa_test[['final_resids']]**2) / (var(nsa_test[['value']]) * dim(nsa_test)[1]))
+```
+
+```{r}
+ggplot(nsa_test) +
+  geom_line(aes(x = index, y = value), color = 'blue') + 
+  geom_line(aes(x = index, y = final_preds), color = 'green') +
+
+  labs(
+    title = paste("True (Blue) vs Forecasted (Green) CO2 Levels Over Time"),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+## (3 points) Task Part 6b: How bad could it get?
+
+With the non-seasonally adjusted data series, generate predictions for when atmospheric CO2 is expected to be at 420 ppm and 500 ppm levels for the first and final times (consider prediction intervals as well as point estimates in your answer). Generate a prediction for atmospheric CO2 levels in the year 2122. How confident are you that these will be accurate predictions?
+
+Our code initiates by creating a non-seasonally adjusted subset (NSA) of CO2 data up to the year 2022. A linear model is then fitted to the NSA data, and its residuals are used to train an ARIMA model with parameters (5, 0, 4). We then generate future time points for CO2 prediction from the year 2022 to 2122. The features for the linear model are constructed, including indices, logarithmic transformations, and the month effect. We create a plot visualizing the ARIMA CO2 forecasts over time, including the forecasted CO2 levels, the threshold at 420, and the threshold at 500. And finally we identify the first and final times when the CO2 levels are predicted to cross the 420 ppm and 500ppm thresholds.
+
+```{r}
+nsa = co2_present
+nsa = subset(nsa,year < 2022)
+model = lm(value~index1 + index2 + log_index, data = nsa)
+nsa[['preds']] = model$fitted_values
+nsa[['diff_value']] = model$residuals
+arima_model = arima(nsa[['diff_value']], order=c(5,0,4))
+```
+
+```{r}
+start_year = 2022
+end_year = 2122
+start_index = 757
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(model,rows)
+rows[['arima_preds']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Point.Forecast']]
+rows[['arima_lb']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Lo.95']]
+rows[['arima_ub']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Hi.95']]
+
+rows[['final_preds']] = rows[['preds']] + rows[['arima_preds']]
+
+rows[['spot420']] = 420
+rows[['spot500']] = 500
+
+head(rows)
+```
+
+```{r}
+ggplot(rows) +
+  geom_line(aes(x = index1, y = final_preds)) +
+  geom_line(aes(x = index1, y = spot420), color = 'orange') + 
+  geom_line(aes(x = index1, y = spot500), color = 'red') + 
+
+  labs(
+    title = 'ARIMA CO2 Forecasts Over Time',
+    x = "Time",
+    y = "Forecasted CO2 Levels"
+  )
+```
+
+### First and Final Time at 420, Mar 2022 - Jul 2022
+
+```{r}
+subset(rows,final_preds >= 419.5 & preds < 420.5)
+```
+
+### First and Final time at 500, Apr 2046 - Jan 2047
+
+```{r}
+subset(rows,final_preds >= 499.5 & preds < 500.5)
+```
+
