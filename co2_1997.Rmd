@@ -175,7 +175,7 @@ Finally, observing the month-to-month average CO2 levels and volatility gives us
 \textbf{Linear Time Trend Model}
 \end{center}
 
-To setup our problem for validation we split our dataset into an in-sample train period spanning years prior to 1997 and post-1997 as the test period.
+To setup our problem for validation we split our dataset into an in-sample train period spanning years prior to 1987 and post-1987 as the test period.
 
 We fit linear, polynomial and quadratic models. We observe that the using a linear timeseries model the residuals exhibit a positive trend. This is also prevalent for the quadratic and polynomial models, however the magnitude of the trend is reduced. Our final model uses linear, quadratic, exponential and seasonal features.
 

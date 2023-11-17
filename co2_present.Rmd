@@ -537,6 +537,7 @@ Our process outline was as follows: (if you want to see all of the output please
 - For our final ARIMA model, we used linear model differencing because it allows us to reconstruct forecasts farther out into the future even when ARIMA model begins generating constant predictions.
 - Evaluated residuals and performance on test set.
 - Finally, we retried modeling non seasonally adjusted series using linear model to adjust and remade our final ARIMA model.
+- For our final ARIMA models we created the non-seasonally adjusted series by fitting a linear model on temporal components only and extracting the residuals. The seasonally adjusted was used a linear model like part 1 (with temporal and seasonal features) to detrend.
 
 Below are visualizations used to evaluate our final ARIMA model.
 
