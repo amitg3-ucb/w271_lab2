@@ -6,7 +6,20 @@ output:
     template: default
 ---
 
-```{r setup, echo=FALSE}
+```{r setup, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+library(tidyverse)
+library(tsibble)
+library(latex2exp)
+library(ggplot2)
+library(patchwork)
+library(scatterplot3d)
+library(forecast)
+library(zoo)
+library(fpp3)
+library(stargazer)
+library(tseries)
+
+
 ## default to not show code, unless we ask for it.
 knitr::opts_chunk$set(echo=FALSE)
 options(digits = 3)
@@ -28,7 +41,252 @@ Our goal is to re-evaluate Keeling's observations of accumulated $CO_2$ in the a
 \textbf{Create a Modern Data Pipeline for Mona Loa CO2 Data}
 \end{center}
 
-We establish a modern data pipeline for Mauna Loa CO2 data. The data was obtained from the NOAA website, specifically from the CO2 daily data page. Additional columns for analysis were created, such as a log-transformed index and polynomial terms for time. The time series data was converted into a tsibble object for efficient time-series analysis. We then conducted an exploratory data analysis (EDA) to gain insights into the CO2 levels over time. The analysis included visualizations depicting the overall trend, average/standard deviation (SD) of CO2 levels per year, and monthly variations. The first plot illustrated the continuous increase in CO2 levels over the years. The second set of plots focused on yearly averages and SDs, providing a clearer picture of trends and volatilities. The third set of plots delved into monthly variations, highlighting average CO2 levels and their volatility. This EDA lays the foundation for further analysis and comparison with Keeling's observations from 1997. It also sets the stage for evaluating the performance of earlier models and forecasting future CO2 levels.
+We establish a modern data pipeline for Mona Loa CO2 data. The data was obtained from the NOAA website, specifically from the CO2 daily data page. Additional columns for analysis were created, such as a log-transformed index and polynomial terms for time. The time series data was converted into a tsibble object for efficient time-series analysis. We then conducted an exploratory data analysis (EDA) to gain insights into the CO2 levels over time. The analysis included visualizations depicting the overall trend, average/standard deviation (SD) of CO2 levels per year, and monthly variations. The first plot illustrated the continuous increase in CO2 levels over the years prior to 1997 then the second plot shows from 1997 to present. The third and forth plots delved into monthly variations, highlighting average CO2 levels and their volatility. This EDA lays the foundation for further analysis and comparison with Keeling's observations from 1997. It also sets the stage for evaluating the performance of earlier models and forecasting future CO2 levels.
+
+```{r modern data pipeline for mona lua co2 data, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+
+# load prior study data
+df = as_tsibble(co2)
+month = list()
+year = list()
+count = 1
+for (val in df[['index']]) {
+    val = as.character(df[['index']][count])
+    
+    #Get Month and Year from Index
+    strs = strsplit(val,' ')[[1]]
+    month[[count]] = strs[2]
+    year[[count]] = strs[1]
+    
+    count = count + 1
+    
+}
+#Store year and month results, case index as time index
+df[['month']] = as.character(month)
+df[['year']] = as.numeric(year)
+df[['index1']] = c(1:dim(df)[1])
+df[['month_int']] = df[['index1']] %% 12
+df["month_int"][df["month_int"] == 0] = 12
+#Quadratic and Log features of Time
+for (num in 2:10){
+    
+    df[[paste('index',num,sep='')]] = as.numeric(df[['index1']]**num)
+}
+df[['log_index']] = log(df[['index1']])
+m_val = list('1'="Jan",
+             '2'='Feb',
+             '3'="Mar",
+             '4'='Apr',
+             '5'='May',
+             '6'='Jun',
+             '7'='Jul',
+             '8'='Aug',
+             '9'='Sep',
+             '10'='Oct',
+             '11'='Nov',
+             '12'='Dec')
+
+# load modern data
+co2_present = read.table(url("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_daily_mlo.txt"))
+#co2_present = read.table("./co2_daily_mlo.txt")
+colnames(co2_present) =  c('year','month_int','day','year_decimal','value')
+co2_present[['month_int']] = co2_present[['month_int']]
+
+current_rows = list()
+start_index = subset(df,year == 1974 & month == 'May')[['index1']]
+
+for (val in unique(co2_present[['year']])) {
+    
+    for (month in 1:12) {
+        
+        subset_df = subset(co2_present,(year == val) & (month_int == month))
+        n_obs = dim(subset_df)[1]
+        
+        if (n_obs > 0) {
+            
+            avg_co2 = mean(subset_df[['value']])
+            current_rows = append(current_rows, c(avg_co2,
+                                  m_val[[month]],
+                                  val,
+                                  start_index,
+                                  month
+                                 )
+                         )
+            
+            start_index = start_index + 1
+            if (start_index == 204) {
+                start_index = start_index + 1
+            }
+            
+        }
+        
+    }
+}
+
+co2_present = data.frame(t(matrix(current_rows,nrow = 5)))
+colnames(co2_present) = c('value','month','year','index1','month_int')
+co2_present[['value']] = as.numeric(co2_present[['value']])
+co2_present[['month']] = factor(as.character(co2_present[['month']]), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+co2_present[['year']] = as.numeric(co2_present[['year']])
+co2_present[['index1']] = as.numeric(co2_present[['index1']])
+co2_present[['month_int']] = as.numeric(co2_present[['month_int']])
+
+for (num in 2:10) {
+    co2_present[[paste('index',num,sep = '')]] = co2_present[['index1']]**num
+}
+
+co2_present[['log_index']] = log(co2_present[['index1']])
+co2_present[['index']] = yearmonth(as.yearmon(paste(co2_present[['year']],co2_present[['month']]),"%Y %b"))
+
+co2_present = as_tsibble(co2_present,index = index1, key = year)
+```
+
+
+```{r annual trend vs. prior plots, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.5}
+
+
+yrs = list()
+months = list()
+means = list()
+sds = list()
+
+# prior growth
+count = 1
+for (yr in unique(df[['year']])) {
+    
+    avg = mean(subset(df,year == yr)[['value']])
+    vol = sd(subset(df,year == yr)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+}
+
+annual_co2 = data.frame(Index=1:length(yrs))
+annual_co2[['Years']] = as.numeric(yrs)
+annual_co2[['Avg_CO2']] = as.numeric(means)
+annual_co2[['SD_CO2']] = as.numeric(sds)
+
+p1 = ggplot(annual_co2, aes(x = Years, y = Avg_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "Avg CO2 Levels (1997)",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+
+
+yrs = list()
+months = list()
+means = list()
+sds = list()
+
+count = 1
+for (val in unique(df[['month_int']])) {
+    
+    avg = mean(subset(df,month_int == val)[['value']])
+    vol = sd(subset(df,month_int == val)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+}
+
+
+months_df = data.frame(Index=1:length(months))
+months_df[['Month']] = factor(as.character(months), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+months_df[['Avg_CO2']] = as.numeric(means)
+months_df[['SD_CO2']] = as.numeric(sds)
+
+p2 = ggplot(months_df, aes(x = Month, y = Avg_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly Avg CO2 Levels (1997)",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+# current growth
+yrs = list()
+months = list()
+means = list()
+sds = list()
+
+count = 1
+for (yr in unique(co2_present[['year']])) {
+    
+    avg = mean(subset(co2_present,year == yr)[['value']])
+    vol = sd(subset(co2_present,year == yr)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+    
+}
+
+annual_co2_present = data.frame(Index=1:length(yrs))
+annual_co2_present[['Years']] = as.numeric(yrs)
+annual_co2_present[['Avg_CO2']] = as.numeric(means)
+annual_co2_present[['SD_CO2']] = as.numeric(sds)
+
+p3 = ggplot(annual_co2_present, aes(x = Years, y = Avg_CO2)) +
+  geom_line() +
+  geom_smooth(method = "lm", color = "blue") +
+
+  labs(
+    title = "Avg CO2 Levels (1997-present)",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+yrs = list()
+months = list()
+means = list()
+sds = list()
+
+count = 1
+for (val in unique(co2_present[['month_int']])) {
+    
+    avg = mean(subset(co2_present,month_int == val)[['value']])
+    vol = sd(subset(co2_present,month_int == val)[['value']])
+    months[[count]] = m_val[[paste(val)]]
+    yrs[[count]] = yr
+    means[[count]] = avg
+    sds[[count]] = vol
+    
+    count = count + 1
+}
+
+months_df_present = data.frame(Index=1:length(months))
+months_df_present[['Month']] = factor(as.character(months), 
+                              levels = c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'))
+months_df_present[['Avg_CO2']] = as.numeric(means)
+months_df_present[['SD_CO2']] = as.numeric(sds)
+
+p4 = ggplot(months_df_present, aes(x = Month, y = Avg_CO2)) +
+  geom_point(stat = 'identity') +
+
+  labs(
+    title = "Monthly Avg CO2 Levels (1997-present)",
+    x = "Time",
+    y = "Avg CO2 Levels"
+  )
+
+p1 | p3
+p2 | p4
+```
 
 \begin{center}
 \textbf{Compare Linear Model Forecasts Against Realized CO2}
@@ -36,17 +294,230 @@ We establish a modern data pipeline for Mauna Loa CO2 data. The data was obtaine
 
 In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from a linear time model in 1997 (i.e. "Task 2a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Results stay very consistent at first but as time continues we can see that the true values are increasing at a larger rate than what our predicted values would have estimated.
 
+```{r Linear forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.5}
+final_model = lm(value~index1+index2+log_index + month,df)
+
+df2 = df
+df2[['diff_value']] = final_model$residuals
+
+arima_model = arima(df2[['diff_value']], order=c(2,0,0))
+
+df2[['resids']] = arima_model$residuals
+vals = (df2[['diff_value']] - df2[['resids']])+final_model$fitted.values
+df2[['final_arima_preds']] = vals
+
+start_year = 1998
+end_year = 2101
+start_index = 469
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(final_model,rows)
+rows[['arima_preds']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Point.Forecast']]
+rows[['arima_lb']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Lo.95']]
+rows[['arima_ub']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Hi.95']]
+
+rows[['final_preds']] = rows[['preds']] + rows[['arima_preds']]
+
+rows[['spot420']] = 420
+rows[['spot500']] = 500
+
+
+
+
+
+
+linear_preds = list()
+arima_preds = list()
+final_preds = list()
+
+forecasted_df = subset(rows,year > 1997 & year < 2024)
+co2_present_subset = subset(co2_present,year > 1997)
+
+for (num in 1:dim(co2_present_subset)[1]){
+    
+    single_row = slice(co2_present_subset,num)
+    year_val = single_row[['year']]
+    month_val = single_row[['month']]
+    
+    forecast_row = subset(forecasted_df, year == year_val & month == month_val)
+    linear_preds = append(linear_preds,forecast_row[['preds']])
+    arima_preds = append(arima_preds,forecast_row[['arima_preds']])
+    final_preds = append(final_preds,forecast_row[['final_preds']])   
+}
+
+co2_present_subset[['linear_preds']] = as.numeric(linear_preds)
+co2_present_subset[['arima_preds']] = as.numeric(arima_preds)
+co2_present_subset[['final_preds']] = as.numeric(final_preds)
+
+ggplot(co2_present_subset) +
+  geom_line(aes(x = index, y = value),color = 'blue') +
+  geom_line(aes(x = index, y = linear_preds),color = 'green') +
+
+
+  labs(
+    title = "True (Blue) vs Predicted (Green) CO2 Levels Over Time",
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+
 \begin{center}
 \textbf{Compare ARIMA Model Forecasts Against Realized CO2}
 \end{center}
 
 In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from the ARIMA model in 1997 (i.e. "Task 3a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Initially, there is a harmonious alignment between the true (blue) and predicted (green) CO2 levels, indicating that the ARIMA model effectively captured the underlying patterns in the earlier years. However, as time progresses, a noticeable trend emerges: the actual CO2 levels exhibit a more accelerated increase compared to what the ARIMA model predicted. This growing disparity suggests that there are evolving factors or trends influencing atmospheric CO2 concentrations that were not adequately accounted for in the original 1997 ARIMA model. These results are very similar to our previous graph vs our linear time model. Consistent with the broader Keeling Curve's evolution from 1997 to the present, the yearly seasonal patterns and monthly variations in the true values stay consistent. This adherence to historical patterns underscores the persistent nature of the underlying dynamics of atmospheric CO2 concentrations. Furthermore, the observation that the predicted values fall behind the actual values over time hints at the potential influence of a quadratic term in the Keeling Curve. This suggests a more intricate relationship between time and CO2 levels than initially modeled.
 
+```{r ARIMA forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.5}
+ggplot(co2_present_subset) +
+  geom_line(aes(x = index, y = value),color = 'blue') +
+  geom_line(aes(x = index, y = final_preds),color = 'green') +
+
+
+  labs(
+    title = "True (Blue) vs Predicted (Green) CO2 Levels Over Time",
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+
 \begin{center}
 \textbf{Evaluate the Performance of 1997 Linear and ARIMA Models}
 \end{center}
 
-We initially predicted that atmospheric CO2 would cross 420ppm for the first time in Task 4a, but here we calculate the truth and can see than it occurred in April 2022 vs our forecast of April 2024. Our models were close to the truth, being only two years off. This discrepancy suggests a lag in predicting the acceleration of CO2 levels, indicating the complexity of forecasting long-term environmental changes. Now we continue to use the weekly data to generate a month-average series from 1997 to the present (month average series already generated during initial data ingestion), and compare the overall forecasting performance of our models from Parts 2a and 3b over the entire period.
+We initially predicted that atmospheric CO2 would cross 420ppm for the first time in Task 4a, but in this stage we calculated the truth and can see than it occurred in April 2022 vs our forecast of April 2024. Our models were close to the truth, being only two years off. This discrepancy suggests a lag in predicting the acceleration of CO2 levels, indicating the complexity of forecasting long-term environmental changes. Now we continue to use the weekly data to generate a month-average series from 1997 to the present (month average series already generated during initial data ingestion), and compare the overall forecasting performance of our models from Parts 2a and 3b over the entire period.
+
+In order to evaluate the performance of our Linear and ARIMA models, we take a look at their R2, RMSE, and MAE values over time. The first plot is the linear model performance and the second plot is the ARIMA model performance.
+
+```{r Linear performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=3, results='hide'}
+pred_col = 'linear_preds'
+
+r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
+(var(co2_present_subset[['value']])*dim(co2_present_subset)[1])
+
+rmse = sqrt(mean((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))
+mae = mean(abs(co2_present_subset[['value']] - co2_present_subset[[pred_col]]))
+
+paste('R2',r2)
+paste('RMSE',rmse)
+paste('MAE',mae)
+
+performance_over_time = list()
+
+for (year_val in unique(co2_present_subset[['year']])) {
+    
+    subset_df = subset(co2_present_subset,year == year_val)
+    r2 = 1 - (sum((subset_df[['value']] - subset_df[[pred_col]])**2))/
+    (var(subset_df[['value']])*dim(subset_df)[1])
+
+    rmse = sqrt(mean((subset_df[['value']] - subset_df[[pred_col]])**2))
+    mae = mean(abs(subset_df[['value']] - subset_df[[pred_col]]))
+    
+    performance_over_time = append(performance_over_time,c(year_val,r2,rmse,mae))
+    
+}
+
+performance_over_time = data.frame(t(matrix(performance_over_time,nrow = 4)))
+colnames(performance_over_time) = c('Year','R2','RMSE','MAE')
+
+for (col in colnames(performance_over_time)){
+    
+    performance_over_time[[col]] = as.numeric(performance_over_time[[col]])
+    
+}
+
+ggplot(performance_over_time) +
+  geom_line(aes(x = Year, y = R2),color = 'blue') +
+  geom_line(aes(x = Year, y = RMSE),color = 'green') +
+  geom_line(aes(x = Year, y = MAE),color = 'orange') +
+
+  labs(
+    title = paste("R2 (Blue), RMSE (Green), and MAE (Orange) Between",pred_col,'and Actual CO2 Values Over Time'),
+    x = "Time",
+    y = "Metric Values"
+  )
+```
+
+```{r ARIMA performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=3, results='hide'}
+pred_col = 'final_preds'
+
+r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
+(var(co2_present_subset[['value']])*dim(co2_present_subset)[1])
+
+rmse = sqrt(mean((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))
+mae = mean(abs(co2_present_subset[['value']] - co2_present_subset[[pred_col]]))
+
+paste('R2',r2)
+paste('RMSE',rmse)
+paste('MAE',mae)
+
+performance_over_time = list()
+
+for (year_val in unique(co2_present_subset[['year']])) {
+    
+    subset_df = subset(co2_present_subset,year == year_val)
+    r2 = 1 - (sum((subset_df[['value']] - subset_df[[pred_col]])**2))/
+    (var(subset_df[['value']])*dim(subset_df)[1])
+
+    rmse = sqrt(mean((subset_df[['value']] - subset_df[[pred_col]])**2))
+    mae = mean(abs(subset_df[['value']] - subset_df[[pred_col]]))
+    
+    performance_over_time = append(performance_over_time,c(year_val,r2,rmse,mae))
+    
+}
+
+performance_over_time = data.frame(t(matrix(performance_over_time,nrow = 4)))
+colnames(performance_over_time) = c('Year','R2','RMSE','MAE')
+
+for (col in colnames(performance_over_time)){
+    
+    performance_over_time[[col]] = as.numeric(performance_over_time[[col]])
+    
+}
+
+ggplot(performance_over_time) +
+  geom_line(aes(x = Year, y = R2),color = 'blue') +
+  geom_line(aes(x = Year, y = RMSE),color = 'green') +
+  geom_line(aes(x = Year, y = MAE),color = 'orange') +
+
+  labs(
+    title = paste("R2 (Blue), RMSE (Green), and MAE (Orange) Between",pred_col,'and Actual CO2 Values Over Time'),
+    x = "Time",
+    y = "Metric Values"
+  )
+```
+
 
 \begin{center}
 \textbf{Train Best Models on Present Data}
@@ -54,11 +525,296 @@ We initially predicted that atmospheric CO2 would cross 420ppm for the first tim
 
 For training our best models on present data, we seasonally adjust the weekly NOAA data, and split both seasonally-adjusted (SA) and non-seasonally-adjusted (NSA) series into training and test sets, using the last two years of observations as the test sets, fitting ARIMA models for both SA and NSA series.
 
+Our process outline was as follows: (if you want to see all of the output please see Appendix)
+
+- We started by creating two versions of the CO2 data: one with seasonal adjustments (SA) and one without (NSA). These were then split into training and testing sets for model evaluation. 
+- The stationarity of the adjusted series (NSA and SA) was visually inspected, and the target variables over time were plotted.
+- The autocorrelation and partial autocorrelation functions of the NSA and SA series were plotted to identify potential parameters for ARIMA modeling.
+- ARIMA models were fitted to both the NSA and SA series using a grid search approach to identify optimal parameters. The models were evaluated in-sample and pseudo out-of-sample to measure their performance.
+- A polynomial time-trend model was fitted to the seasonally-adjusted series, and its performance was compared to the ARIMA model.
+- We then retrained the seasonally-adjusted series using a linear model for adjustment and then fit ARIMA models to the adjusted series.
+- Fit the polynomial to seasonally adjusted data.
+- For our final ARIMA model, we used linear model differencing because it allows us to reconstruct forecasts farther out into the future even when ARIMA model begins generating constant predictions.
+- Evaluated residuals and performance on test set.
+- Finally, we retried modeling non seasonally adjusted series using linear model to adjust and remade our final ARIMA model.
+
+Below are visualizations used to evaluate our final ARIMA model.
+
+```{r Train Best, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=3.5, fig.height=3, results='hide'}
+nsa = co2_present
+nsa[['diff_value']] = c(c(0),diff(nsa[['value']]))
+nsa = slice(nsa,2:dim(nsa)[1])
+
+sa = co2_present
+sa[['diff_value']] = sa[['value']] - lag(sa[['value']],12)
+sa[['diff_value2']] = sa[['diff_value']] - lag(sa[['diff_value']],1)
+sa = na.omit(sa)
+
+nsa_train = subset(nsa,year < 2022)
+nsa_test = subset(nsa, year >= 2022)
+
+sa_train = subset(sa,year < 2022)
+sa_test = subset(sa, year >= 2022)
+
+nsarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        suppressWarnings({model = arima(nsa_train[['diff_value']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(nsa_test)[1]))[['Point.Forecast']]
+        preds = nsa_train[['value']][dim(nsa_train)[1]] + cumsum(preds)
+        true = nsa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            nsarows = append(nsarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+nsarows = data.frame(t(matrix(nsarows,nrow = 6)))
+colnames(nsarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(nsarows)) {
+    
+    nsarows[[col]] = as.numeric(nsarows[[col]])
+    
+}
+
+sarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        
+        suppressWarnings({model = arima(sa_train[['diff_value2']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(sa_test)[1]))[['Point.Forecast']]
+        preds = sa_train[['diff_value']][dim(sa_train)[1]] + cumsum(preds)
+        preds = preds + c(slice(data.frame(lag(co2_present[['value']],12))
+                                ,(dim(co2_present)[1] - dim(sa_test)[1] + 1):(dim(co2_present)[1])))$lag.co2_present...value.....12.
+        true = sa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            sarows = append(sarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+sarows = data.frame(t(matrix(sarows,nrow = 6)))
+colnames(sarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(sarows)) {
+    
+    sarows[[col]] = as.numeric(sarows[[col]])
+    
+}
+
+model = lm(diff_value2 ~ index1 + index2 + log_index + month,data = sa_train)
+
+preds = predict(model,sa_test)
+preds = sa_train[['diff_value']][dim(sa_train)[1]] + cumsum(preds)
+preds = preds + c(slice(data.frame(lag(co2_present[['value']],12))
+                        ,(dim(co2_present)[1] - dim(sa_test)[1] + 1):(dim(co2_present)[1])))$lag.co2_present...value.....12.
+true = sa_test[['value']]
+
+r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+rmse = sqrt(mean((true-preds)**2))
+mae = mean(abs(true-preds))
+
+sa = co2_present
+
+sa_train = subset(sa,year < 2022)
+sa_test = subset(sa, year >= 2022)
+
+model = lm(value ~ index1 + index2 + log_index + month,data = sa_train)
+sa_train[['preds']] = model$fitted.values
+sa_train[['diff_value']] = model$residuals
+
+sa_test[['preds']] = predict(model,sa_test)
+sa_test[['diff_value']] = sa_test[['value']] - sa_test[['preds']]
+
+sarows = list()
+
+for (p in 1:12){
+    
+    for (q in 0:4) {
+        
+        
+        suppressWarnings({model = arima(sa_train[['diff_value']], order=c(p,0,q))})
+        
+        preds = data.frame(forecast(model,h=dim(sa_test)[1]))[['Point.Forecast']]
+        preds = sa_test[['preds']] + preds
+        true = sa_test[['value']]
+        
+        r2 = 1 - sum((true - preds)**2) / (var(true)*length(true))
+        rmse = sqrt(mean((true-preds)**2))
+        mae = mean(abs(true-preds))
+        
+        suppressWarnings({
+            sarows = append(sarows,c(p,q,BIC(model),r2,rmse,mae))
+            
+            })
+    }
+}
+
+sarows = data.frame(t(matrix(sarows,nrow = 6)))
+colnames(sarows) = c('P','Q','BICVal','R2','RMSE','MAE')
+
+for (col in colnames(sarows)) {
+    
+    sarows[[col]] = as.numeric(sarows[[col]])
+    
+}
+
+
+model = lm(diff_value~index1 + index2 + log_index + month,sa_train)
+
+nsa = co2_present
+
+nsa_train = subset(nsa,year < 2022)
+nsa_test = subset(nsa, year >= 2022)
+
+model = lm(value ~ index1 + index2 + log_index,data = nsa_train)
+nsa_train[['preds']] = model$fitted.values
+nsa_train[['diff_value']] = model$residuals
+
+nsa_test[['preds']] = predict(model,nsa_test)
+nsa_test[['diff_value']] = nsa_test[['value']] - nsa_test[['preds']]
+
+
+
+final_arima = arima(nsa_train[['diff_value']], order=c(5,0,4))
+summary(final_arima)
+1 - (sum(final_arima$residuals**2) / (var(nsa_train[['diff_value']]) * dim(nsa_train)[1]))
+
+nsa_train[['arima_resids']] = final_arima$residuals
+
+ggplot(nsa_train,aes(x = index, y = arima_resids)) +
+  geom_line() + 
+  geom_smooth(method = 'lm',color = 'blue')
+
+  labs(
+    title = paste("ARIMA Model Residuals Over Time"),
+    x = "Time",
+    y = "Residuals"
+  )
+
+sa_train[['arima_resids']] = final_arima$residuals
+  
+acf(sa_train[['arima_resids']])
+pacf(sa_train[['arima_resids']])
+qqnorm(sa_train[['arima_resids']])
+qqline(sa_train[['arima_resids']])
+```
+
+```{r Plot, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2}
+nsa_test[['arima_preds']] = data.frame(forecast(final_arima,h = dim(nsa_test)[1]))[['Point.Forecast']]
+nsa_test[['final_preds']] = nsa_test[['preds']] + nsa_test[['arima_preds']]
+nsa_test[['final_resids']] = nsa_test[['value']] - nsa_test[['final_preds']]
+
+ggplot(nsa_test) +
+  geom_line(aes(x = index, y = value), color = 'blue') + 
+  geom_line(aes(x = index, y = final_preds), color = 'green') +
+  labs(
+    title = paste("True (Blue) vs Forecasted (Green) CO2 Levels Over Time"),
+    x = "Time",
+    y = "CO2 Levels"
+  )
+```
+
+
+
 \begin{center}
-\textbf{Conclusion}
+\textbf{How Bad Could It Get? (Predictions of the Far Future)}
 \end{center}
 
-TODO - idk if we need this section, feel free to write something or remove the section all-together
+Our code initiates by creating a non-seasonally adjusted subset (NSA) of CO2 data up to the year 2022. A linear model is then fitted to the NSA data, and its residuals are used to train an ARIMA model with parameters (5, 0, 4). We then generate future time points for CO2 prediction from the year 2022 to 2122. The features for the linear model are constructed, including indices, logarithmic transformations, and the month effect. We create a plot visualizing the ARIMA CO2 forecasts over time, including the forecasted CO2 levels, the threshold at 420, and the threshold at 500. And finally we identify the first and final times when the CO2 levels are predicted to cross the 420 ppm and 500ppm thresholds.
+
+Using our non-seasonally adjusted data series, our generated predictions for when atmospheric CO2 is expected to be at 420 ppm and 500 ppm levels for the first and final times is as follows:
+
+- First and Final Time at 420, Mar 2022 - Jul 2022
+- First and Final time at 500, Apr 2046 - Jan 2047
+
+Below is our prediction for atmospheric CO2 levels up to the year 2122, if the future keeps with the same pattern historically, we are fairly confident in these estimates.
+
+```{r Predictions, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2}
+nsa = co2_present
+nsa = subset(nsa,year < 2022)
+model = lm(value~index1 + index2 + log_index, data = nsa)
+nsa[['preds']] = model$fitted_values
+nsa[['diff_value']] = model$residuals
+arima_model = arima(nsa[['diff_value']], order=c(5,0,4))
+
+start_year = 2022
+end_year = 2122
+start_index = 757
+month_count = 1
+
+rows = data.frame()
+count = 1
+while (start_year < end_year){
+    row = c(year = start_year,
+               index1 = start_index,
+               index2 = start_index**2, 
+               index3 = start_index**3,
+               log_index = log(start_index),
+               month = m_val[[paste(month_count)]])
+    rows = append(rows,row)
+    count = count + 1
+    start_index = start_index + 1
+    month_count = month_count + 1
+    if (month_count >= 13){
+        month_count = 1
+        start_year = start_year + 1
+    }
+}
+
+rows = data.frame(t(matrix(rows,nrow = 6)))
+colnames(rows) = c('year','index1','index2','index3','log_index','month')
+
+for (col in c('index1','index2','index3','log_index')) {
+    rows[[col]] = as.numeric(rows[[col]])
+}
+
+for (col in c('year','month')) {
+    rows[[col]] = as.character(rows[[col]])
+}
+
+rows[['preds']] = predict(model,rows)
+rows[['arima_preds']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Point.Forecast']]
+rows[['arima_lb']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Lo.95']]
+rows[['arima_ub']] = data.frame(forecast(arima_model,h=dim(rows)[1]))[['Hi.95']]
+
+rows[['final_preds']] = rows[['preds']] + rows[['arima_preds']]
+
+rows[['spot420']] = 420
+rows[['spot500']] = 500
+
+ggplot(rows) +
+  geom_line(aes(x = index1, y = final_preds)) +
+  geom_line(aes(x = index1, y = spot420), color = 'orange') + 
+  geom_line(aes(x = index1, y = spot500), color = 'red') + 
+
+  labs(
+    title = 'ARIMA CO2 Forecasts Over Time',
+    x = "Time",
+    y = "Forecasted CO2 Levels"
+  )
+```
 
 \begin{center}
 \textbf{Appendix}

@@ -484,12 +484,6 @@ Based on this forcasting using our ARIMA model, our predictions are as follows:
 We are fairly confident that these will be close to accurate predictions based on our analysis of our ARIMA model and its performance, but forecasting so far into the future means that our predictions will likely not be perfect.
 
 \begin{center}
-\textbf{Conclusion}
-\end{center}
-
-TODO - idk if we need this section, feel free to write something or remove the section all-together
-
-\begin{center}
 \textbf{Appendix}
 \end{center}
 
