@@ -294,7 +294,7 @@ p2 | p4
 
 In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from a linear time model in 1997 (i.e. "Task 2a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Results stay very consistent at first but as time continues we can see that the true values are increasing at a larger rate than what our predicted values would have estimated.
 
-```{r Linear forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.5}
+```{r Linear forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.3}
 final_model = lm(value~index1+index2+log_index + month,df)
 
 df2 = df
@@ -398,7 +398,7 @@ ggplot(co2_present_subset) +
 
 In our comparison of realized atmospheric CO2 levels to those predicted by your forecast from the ARIMA model in 1997 (i.e. "Task 3a"), we can see the results in our graph of True (Blue) vs Predicted (Green) CO2 Levels Over Time. Initially, there is a harmonious alignment between the true (blue) and predicted (green) CO2 levels, indicating that the ARIMA model effectively captured the underlying patterns in the earlier years. However, as time progresses, a noticeable trend emerges: the actual CO2 levels exhibit a more accelerated increase compared to what the ARIMA model predicted. This growing disparity suggests that there are evolving factors or trends influencing atmospheric CO2 concentrations that were not adequately accounted for in the original 1997 ARIMA model. These results are very similar to our previous graph vs our linear time model. Consistent with the broader Keeling Curve's evolution from 1997 to the present, the yearly seasonal patterns and monthly variations in the true values stay consistent. This adherence to historical patterns underscores the persistent nature of the underlying dynamics of atmospheric CO2 concentrations. Furthermore, the observation that the predicted values fall behind the actual values over time hints at the potential influence of a quadratic term in the Keeling Curve. This suggests a more intricate relationship between time and CO2 levels than initially modeled.
 
-```{r ARIMA forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.5}
+```{r ARIMA forecast, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=8, fig.height=2.3}
 ggplot(co2_present_subset) +
   geom_line(aes(x = index, y = value),color = 'blue') +
   geom_line(aes(x = index, y = final_preds),color = 'green') +
@@ -420,7 +420,7 @@ We initially predicted that atmospheric CO2 would cross 420ppm for the first tim
 
 In order to evaluate the performance of our Linear and ARIMA models, we take a look at their R2, RMSE, and MAE values over time. The first plot is the linear model performance and the second plot is the ARIMA model performance.
 
-```{r Linear performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=3, results='hide'}
+```{r Linear performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=2, results='hide'}
 pred_col = 'linear_preds'
 
 r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
@@ -469,7 +469,7 @@ ggplot(performance_over_time) +
   )
 ```
 
-```{r ARIMA performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=3, results='hide'}
+```{r ARIMA performance, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=9, fig.height=2, results='hide'}
 pred_col = 'final_preds'
 
 r2 = 1 - (sum((co2_present_subset[['value']] - co2_present_subset[[pred_col]])**2))/
@@ -541,7 +541,7 @@ Our process outline was as follows: (if you want to see all of the output please
 
 Below are visualizations used to evaluate our final ARIMA model.
 
-```{r Train Best, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=3.5, fig.height=3, results='hide'}
+```{r Train Best, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, fig.width=3.5, fig.height=2.7, results='hide'}
 nsa = co2_present
 nsa[['diff_value']] = c(c(0),diff(nsa[['value']]))
 nsa = slice(nsa,2:dim(nsa)[1])
